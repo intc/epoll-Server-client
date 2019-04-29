@@ -20,7 +20,7 @@
 #define EPOLL_TIMEOUT 1000
 #define CBUF_ELEMENTS 1024
 
-#define BUF_SIZE  sizeof(char) * CBUF_ELEMENTS - 1
+#define BUF_SIZE  sizeof(char) * (CBUF_ELEMENTS - 1)
 
 int counter = 0;
 
