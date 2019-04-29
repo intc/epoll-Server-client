@@ -53,7 +53,7 @@ dbg_epoll_client: epoll_client_debug.o
 	$(CC) $^ $(LIBS) -o $@
 
 clean:
-	$(RM) -rf \
+	$(RM)  \
 		$(S_TARGET) $(S_TGTDEB)\
 		$(C_TARGET) $(C_TGTDEB)\
 		*.o\
