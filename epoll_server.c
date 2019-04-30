@@ -30,7 +30,6 @@ typedef struct ep_args {
 } ep_args;
 
 int counter = 0;
-
 			/* volatile for denying compiler to reorder r/w to the variable
 			 * sig_atomic_t for selecting type which is not reordered by
 			 * platforms CPU (load/store are atomic). */
@@ -44,6 +43,8 @@ void ep_event_handler(ep_args *);
 void ep_args_init(ep_args *);
 
 void sig_handler(int sig) {
+	signal(SIGTERM, SIG_IGN);
+	signal(SIGINT, SIG_IGN);
 	sig_flag = sig;
 }
 
@@ -222,10 +223,11 @@ int main(int argc,char* argv[])
 	set_epoll_ctl(epa.epfd, EPOLL_CTL_ADD, epa.listen_sock, &epa.t, EPOLLIN);
 
 	signal(SIGINT, sig_handler);
+	signal(SIGTERM, sig_handler);
 
 	for( ;; ) {
-		if (sig_flag) {
-			fprintf(stderr, "Got SIGINT. Clean exit.\n");
+		if ( sig_flag )  {
+			fprintf(stderr, "Got signal %i. Exit.\n", sig_flag);
 			break;
 		}
 		switch( (epa.event_n = epoll_wait(epa.epfd, epa.epoll_ev_ar, MAX_EVENTS, EPOLL_TIMEOUT)) ){
