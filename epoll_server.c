@@ -5,13 +5,10 @@
 #include<sys/types.h>
 #include<netinet/in.h>
 #include<arpa/inet.h>
-
 			/* For strlen(): */
 #include<string.h>
-
 			/* For fcntl(): */
 #include<fcntl.h>
-
 			/* For errno: */
 #include<errno.h>
 
@@ -218,8 +215,8 @@ int main(int argc,char* argv[])
 				perror("epoll_wait");
 				break;
 			case 0:
-				/* While idling the execution will
-				 * reach here after EPOLL_TIMEOUT */
+			/* While idling the execution will
+			 * reach here after EPOLL_TIMEOUT */
 				break;
 			default:
 				ep_event_handler(&epa);
