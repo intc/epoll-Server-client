@@ -1,16 +1,18 @@
-#include<stdio.h>
-#include<stdlib.h>
-#include<unistd.h>
-#include<sys/epoll.h>
-#include<sys/types.h>
-#include<netinet/in.h>
-#include<arpa/inet.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/epoll.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 			/* For strlen(): */
-#include<string.h>
+#include <string.h>
 			/* For fcntl(): */
-#include<fcntl.h>
+#include <fcntl.h>
 			/* For errno: */
-#include<errno.h>
+#include <errno.h>
+			/* For signal(), sig_atomic_t: */
+#include <signal.h>
 
 #define MAX_EVENTS 20
 #define EVENT_ARRAY_SIZE sizeof(struct epoll_event) * MAX_EVENTS
@@ -29,11 +31,21 @@ typedef struct ep_args {
 
 int counter = 0;
 
+			/* volatile for denying compiler to reorder r/w to the variable
+			 * sig_atomic_t for selecting type which is not reordered by
+			 * platforms CPU (load/store are atomic). */
+volatile sig_atomic_t sig_flag = 0;
+
+void sig_handler(int);
 int fd_nonblock(int);
 int startup(int);
 void set_epoll_ctl(int, int, int, struct epoll_event *, int);
 void ep_event_handler(ep_args *);
 void ep_args_init(ep_args *);
+
+void sig_handler(int sig) {
+	sig_flag = sig;
+}
 
 int fd_nonblock(int fd) {
 
@@ -209,7 +221,13 @@ int main(int argc,char* argv[])
 
 	set_epoll_ctl(epa.epfd, EPOLL_CTL_ADD, epa.listen_sock, &epa.t, EPOLLIN);
 
+	signal(SIGINT, sig_handler);
+
 	for( ;; ) {
+		if (sig_flag) {
+			fprintf(stderr, "Got SIGINT. Clean exit.\n");
+			break;
+		}
 		switch( (epa.event_n = epoll_wait(epa.epfd, epa.epoll_ev_ar, MAX_EVENTS, EPOLL_TIMEOUT)) ){
 			case -1:
 				perror("epoll_wait");
