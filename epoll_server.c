@@ -21,7 +21,7 @@
 
 typedef struct ep_args {
 	int epfd;                           /* epoll file descriptor */
-	struct epoll_event *epoll_events;   /* array of events */
+	struct epoll_event *epoll_ev_ar;    /* array of events */
 	struct epoll_event t;               /* temporary event structure */
 	int event_n;                        /* number of currently active events */
 	int listen_sock;                    /* server listening socket */
@@ -100,7 +100,7 @@ void ep_event_handler(ep_args *epa) {
 
 	for( int i = 0 ; i < epa->event_n ; i++ ) {
 
-		struct epoll_event *ev = &epa->epoll_events[i];
+		struct epoll_event *ev = &epa->epoll_ev_ar[i];
 			/* ev.data.fd is assigned by epoll_wait to listening socket */
 		if ( ev->data.fd == epa->listen_sock && (ev->events & EPOLLIN) ) {
 			struct sockaddr_in client; memset(&client, 0, sizeof(client));
@@ -184,8 +184,8 @@ void ep_args_init(ep_args *epa) {
 			 * to system calls in order to ensure that padded
 			 * bytes are set to zero. */
 	memset(&epa->t, 0, sizeof(epa->t));
-	epa->epoll_events = malloc(EVENT_ARRAY_SIZE);
-	memset(epa->epoll_events, 0, EVENT_ARRAY_SIZE);
+	epa->epoll_ev_ar = malloc(EVENT_ARRAY_SIZE);
+	memset(epa->epoll_ev_ar, 0, EVENT_ARRAY_SIZE);
 }
 
 int main(int argc,char* argv[])
@@ -210,7 +210,7 @@ int main(int argc,char* argv[])
 	set_epoll_ctl(epa.epfd, EPOLL_CTL_ADD, epa.listen_sock, &epa.t, EPOLLIN);
 
 	for( ;; ) {
-		switch( (epa.event_n = epoll_wait(epa.epfd, epa.epoll_events, MAX_EVENTS, EPOLL_TIMEOUT)) ){
+		switch( (epa.event_n = epoll_wait(epa.epfd, epa.epoll_ev_ar, MAX_EVENTS, EPOLL_TIMEOUT)) ){
 			case -1:
 				perror("epoll_wait");
 				break;
@@ -224,7 +224,7 @@ int main(int argc,char* argv[])
 		}
 	}
 	
-	free(epa.epoll_events);
+	free(epa.epoll_ev_ar);
 	close(epa.epfd);
 	close(epa.listen_sock);
 	return 0;
