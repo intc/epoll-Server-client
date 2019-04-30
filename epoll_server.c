@@ -17,16 +17,26 @@
 
 #define MAX_EVENTS 20
 #define EVENT_ARRAY_SIZE sizeof(struct epoll_event) * MAX_EVENTS
-#define EPOLL_TIMEOUT 1000
+#define EPOLL_TIMEOUT 500
 #define CBUF_ELEMENTS 1024
 
 #define BUF_SIZE  sizeof(char) * (CBUF_ELEMENTS - 1)
+
+typedef struct ep_args {
+	int epfd;                           /* epoll file descriptor */
+	struct epoll_event *epoll_events;   /* array of events */
+	struct epoll_event t;               /* temporary event structure */
+	int event_n;                        /* number of currently active events */
+	int listen_sock;                    /* server listening socket */
+} ep_args;
 
 int counter = 0;
 
 int fd_nonblock(int);
 int startup(int);
-void handler_events(int, struct epoll_event *, int, int);
+void set_epoll_ctl(int, int, int, struct epoll_event *, int);
+void ep_event_handler(ep_args *);
+void ep_args_init(ep_args *);
 
 int fd_nonblock(int fd) {
 
@@ -60,7 +70,7 @@ int startup(int port) {
 	int opt = 1;
 	setsockopt(sock,SOL_SOCKET,SO_REUSEADDR,&opt,sizeof(opt));
 
-	struct sockaddr_in local; memset(&local, 0, sizeof(local));
+	struct sockaddr_in local;
 	local.sin_family = AF_INET;
 	local.sin_addr.s_addr = htonl(INADDR_ANY);
 	local.sin_port = htons(port);
@@ -79,70 +89,70 @@ int startup(int port) {
 	return sock;
 }
 
-void handler_events(int epfd, struct epoll_event *epoll_events, int event_n, int listen_sock) {
+void set_epoll_ctl(int epfd, int ctl_act, int fd, struct epoll_event *t, int t_events) {
+	t->data.fd = fd;
+	t->events = t_events;
+	epoll_ctl(epfd, ctl_act, t->data.fd, t);
+}
 
-	if ( event_n > 4 ) fprintf(stderr,"Processing %i out of %i events.\n", event_n, MAX_EVENTS);
+void ep_event_handler(ep_args *epa) {
 
-	for( int i = 0 ; i < event_n ; i++ ) {
+	if ( epa->event_n > 4 ) {
+		fprintf(stderr,"Processing %i out of %i events.\n", epa->event_n, MAX_EVENTS);
+	}
 
-		struct epoll_event ev = epoll_events[i];
+	for( int i = 0 ; i < epa->event_n ; i++ ) {
+
+		struct epoll_event *ev = &epa->epoll_events[i];
 			/* ev.data.fd is assigned by epoll_wait to listening socket */
-		if ( ev.data.fd == listen_sock && (ev.events & EPOLLIN) ) {
+		if ( ev->data.fd == epa->listen_sock && (ev->events & EPOLLIN) ) {
 			struct sockaddr_in client; memset(&client, 0, sizeof(client));
 			socklen_t len = sizeof(client);
 			/* Accept reassignes ev.data.fd to the connected socket: */
-			if ( (ev.data.fd = accept(ev.data.fd, (struct sockaddr*)&client, &len)) < 0 ) {
+			if ( (ev->data.fd = accept(ev->data.fd, (struct sockaddr*)&client, &len)) < 0 ) {
 				perror("accept");
 				continue;
 			}
-
-			fprintf(stderr, "INFO: New connection. Connected socket fd: %i\n", ev.data.fd);
-
-			struct epoll_event t; memset(&t, 0, sizeof(t));
-			t.events = EPOLLIN; t.data.fd = ev.data.fd;
+			fprintf(stderr, "INFO: New connection. Connected socket fd: %i\n", ev->data.fd);
 			/* Register new clinet socket to epfd epoll instance
 			 * with read (EPOLLIN) association: */
-			epoll_ctl(epfd, EPOLL_CTL_ADD, t.data.fd, &t);
-
+			set_epoll_ctl(epa->epfd, EPOLL_CTL_ADD, ev->data.fd, &epa->t, EPOLLIN);
 			/* Let's switch the client socket to non blocking mode */
-			fd_nonblock(ev.data.fd);
-
+			fd_nonblock(ev->data.fd);
 			continue;
 		}
-		if ( ev.events & EPOLLIN ) {
+		if ( ev->events & EPOLLIN ) {
 			char buf[CBUF_ELEMENTS];
 			while(1) {
-				ssize_t s = read(ev.data.fd, buf, BUF_SIZE);
+				ssize_t s = read(ev->data.fd, buf, BUF_SIZE);
 				if ( s > 0 ) {
 					buf[s]='\0'; printf("%s", buf);
 				}
 				else if ( s == 0 ) {
 			/* EOF -> Close server end: */
 					fprintf(stderr, "INFO: Client disconnected\n");
-					close(ev.data.fd);
-					epoll_ctl(epfd, EPOLL_CTL_DEL, ev.data.fd, NULL);
+					close(ev->data.fd);
+					epoll_ctl(epa->epfd, EPOLL_CTL_DEL, ev->data.fd, NULL);
 			/* EXIT POINT (while) */
 					break;
 				}
 				else {
 					if ( errno == EWOULDBLOCK ) {
 			/* Reading is ready. Switch over to sending: */
-						struct epoll_event t; memset(&t, 0, sizeof(t));
-						t.events = EPOLLOUT; t.data.fd = ev.data.fd;
-						epoll_ctl(epfd, EPOLL_CTL_MOD, t.data.fd, &t);
+						set_epoll_ctl(epa->epfd, EPOLL_CTL_MOD, ev->data.fd, &epa->t, EPOLLOUT);
 			/* EXIT POINT (while): */
 						break;
 					} else if ( errno == ECONNRESET) {
 						perror("read");
 						fprintf(stderr, "INFO: Client disconnected\n");
-						close(ev.data.fd);
-						epoll_ctl(epfd, EPOLL_CTL_DEL, ev.data.fd, NULL);
+						close(ev->data.fd);
+						epoll_ctl(epa->epfd, EPOLL_CTL_DEL, ev->data.fd, NULL);
 			/* EXIT POINT (while): */
 						break;
 					} else {
 						perror("read");
-						close(ev.data.fd);
-						epoll_ctl(epfd, EPOLL_CTL_DEL, ev.data.fd, NULL);
+						close(ev->data.fd);
+						epoll_ctl(epa->epfd, EPOLL_CTL_DEL, ev->data.fd, NULL);
 			/* EXIT POINT (while) - Process will be terminated */
 						exit(1);
 					}
@@ -150,27 +160,35 @@ void handler_events(int epfd, struct epoll_event *epoll_events, int event_n, int
 			}
 			continue;
 		}
-		if ( ev.events & EPOLLOUT ) {
+		if ( ev->events & EPOLLOUT ) {
 			char echo[1024];
 			counter++;
 			sprintf(echo, "HTTP/1.1 200 OK\r\n\r\n<html>Hi From Epoll %i!\
 					</html>\n", counter);
-			if ( write(ev.data.fd, echo, strlen(echo)) < 0 ) {
+			if ( write(ev->data.fd, echo, strlen(echo)) < 0 ) {
 				perror("write");
 				exit(1);
 			}
 #ifdef PERSISTENT_CONN
-			struct epoll_event t; memset(&t, 0, sizeof(t));
-			t.events = EPOLLIN; t.data.fd = ev.data.fd;
 			/* modify back to read(): */
-			epoll_ctl(epfd, EPOLL_CTL_MOD, t.data.fd, &t);
+			set_epoll_ctl(epa->epfd, EPOLL_CTL_MOD, ev->data.fd, &epa->t, EPOLLIN);
 #else
-			close(ev.data.fd);
+			close(ev->data.fd);
+			fprintf(stderr, "INFO: NON-PERSISTENT mode. Disconnecting socket %i\n", ev->data.fd);
 			/* Remove this client socket ev.data.fd */
-			epoll_ctl(epfd, EPOLL_CTL_DEL, ev.data.fd, NULL);
+			epoll_ctl(epa->epfd, EPOLL_CTL_DEL, ev->data.fd, NULL);
 #endif
 		}
 	}
+}
+
+void ep_args_init(ep_args *epa) {
+			/* Using memset on all structures which are passed
+			 * to system calls in order to ensure that padded
+			 * bytes are set to zero. */
+	memset(&epa->t, 0, sizeof(epa->t));
+	epa->epoll_events = malloc(EVENT_ARRAY_SIZE);
+	memset(epa->epoll_events, 0, EVENT_ARRAY_SIZE);
 }
 
 int main(int argc,char* argv[])
@@ -182,43 +200,35 @@ int main(int argc,char* argv[])
 
 	printf("BUF_SIZE: %li\n", BUF_SIZE);
 
-	int epfd = epoll_create(256);//绝对是3
+	ep_args epa;
+	ep_args_init(&epa);
 
-	if ( epfd < 0 ) {
+	if ( (epa.epfd = epoll_create(256)) < 0 ) {
 		perror("epoll_create");
 		return 2;
 	}
 
-	int listen_sock = startup(atoi(argv[1]));
-			/* Using memset on all structures which are passed
-			 * to system calls in order to enusre that padded
-			 * bytes are set to zero. */
-	struct epoll_event ev; memset(&ev, 0, sizeof(ev));
-	ev.events = EPOLLIN;
-	ev.data.fd = listen_sock;//把listen_sock托管起来
+	epa.listen_sock = startup(atoi(argv[1]));
 
-	epoll_ctl(epfd, EPOLL_CTL_ADD, listen_sock, &ev);
-
-	struct epoll_event epoll_events[MAX_EVENTS];
-	memset(epoll_events, 0, EVENT_ARRAY_SIZE);
-
-	int event_n = 0;
+	set_epoll_ctl(epa.epfd, EPOLL_CTL_ADD, epa.listen_sock, &epa.t, EPOLLIN);
 
 	for( ;; ) {
-		switch( (event_n = epoll_wait(epfd, epoll_events, MAX_EVENTS, EPOLL_TIMEOUT)) ){
+		switch( (epa.event_n = epoll_wait(epa.epfd, epa.epoll_events, MAX_EVENTS, EPOLL_TIMEOUT)) ){
 			case -1:
 				perror("epoll_wait");
 				break;
 			case 0:
-				/* Execution visits here with an interval of EPOLL_TIMEOUT */
+				/* While idling the execution will
+				 * reach here after EPOLL_TIMEOUT */
 				break;
 			default:
-				handler_events(epfd, epoll_events, event_n, listen_sock);
+				ep_event_handler(&epa);
 				break;
 		}
 	}
-
-	close(epfd);
-	close(listen_sock);
+	
+	free(epa.epoll_events);
+	close(epa.epfd);
+	close(epa.listen_sock);
 	return 0;
 }
